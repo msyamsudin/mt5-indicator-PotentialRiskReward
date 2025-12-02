@@ -4,7 +4,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Syam"
 #property link      ""
-#property version   "1.00"
+#property version   "1.10"
 #property indicator_chart_window
 #property indicator_plots 0
 
@@ -34,9 +34,13 @@ input int maxLabels = 20;                  // Maksimal jumlah label per arah
 input bool showPlusSign = true;            // Tampilkan tanda + untuk profit
 input bool showDollarSign = true;          // Tampilkan tanda $
 input int xDistance = 5;                   // Jarak dari kanan layar (pixel)
+input bool showDuration = true;            // Tampilkan durasi posisi
+input color clrDuration = clrWhite;        // Warna teks durasi
+input int durationYOffset = 15;            // Jarak vertikal durasi dari PnL (pixel)
 
 // Global variables
 string objPrefix = "PnL_";
+string durationPrefix = "Duration_";
 
 //+------------------------------------------------------------------+
 //| Fungsi untuk mendapatkan nama font dari enum                     |
@@ -60,10 +64,39 @@ string GetFontName(ENUM_FONT_TYPE type)
 }
 
 //+------------------------------------------------------------------+
+//| Fungsi untuk format durasi                                       |
+//+------------------------------------------------------------------+
+string FormatDuration(datetime openTime)
+{
+   datetime currentTime = TimeCurrent();
+   int totalSeconds = (int)(currentTime - openTime);
+   
+   int days = totalSeconds / 86400;
+   int hours = (totalSeconds % 86400) / 3600;
+   int minutes = (totalSeconds % 3600) / 60;
+   int seconds = totalSeconds % 60;
+   
+   string result = "";
+   
+   if(days > 0)
+      result = StringFormat("%dd %dh %dm", days, hours, minutes);
+   else if(hours > 0)
+      result = StringFormat("%dh %dm %ds", hours, minutes, seconds);
+   else if(minutes > 0)
+      result = StringFormat("%dm %ds", minutes, seconds);
+   else
+      result = StringFormat("%ds", seconds);
+   
+   return result;
+}
+
+//+------------------------------------------------------------------+
 //| Custom indicator initialization function                         |
 //+------------------------------------------------------------------+
 int OnInit()
 {
+   // Set timer untuk update durasi setiap detik
+   EventSetTimer(1);
    return(INIT_SUCCEEDED);
 }
 
@@ -72,7 +105,17 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   EventKillTimer();
    DeleteAllObjects();
+}
+
+//+------------------------------------------------------------------+
+//| Timer event handler                                               |
+//+------------------------------------------------------------------+
+void OnTimer()
+{
+   // Update hanya durasi tanpa menghapus semua objek
+   UpdateDurationLabels();
 }
 
 //+------------------------------------------------------------------+
@@ -102,6 +145,92 @@ void UpdatePriceLabels()
    
    int totalPositions = PositionsTotal();
    
+   if(totalPositions == 0)
+   {
+      ChartRedraw();
+      return;
+   }
+   
+   // Cari posisi dengan waktu buka paling awal (posisi pertama)
+   ulong oldestTicket = 0;
+   datetime oldestTime = D'2099.12.31';
+   
+   for(int i = 0; i < totalPositions; i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionSelectByTicket(ticket))
+         {
+            string symbol = PositionGetString(POSITION_SYMBOL);
+            
+            if(symbol == _Symbol)
+            {
+               datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
+               
+               if(openTime < oldestTime)
+               {
+                  oldestTime = openTime;
+                  oldestTicket = ticket;
+               }
+            }
+         }
+      }
+   }
+   
+   // Proses hanya posisi pertama yang dibuka
+   if(oldestTicket > 0 && PositionSelectByTicket(oldestTicket))
+   {
+      string symbol = PositionGetString(POSITION_SYMBOL);
+      
+      if(symbol == _Symbol)
+      {
+         double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+         double volume = PositionGetDouble(POSITION_VOLUME);
+         datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
+         ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+         
+         // Buat label di harga entry (0)
+         CreateLabel(oldestTicket, openPrice, 0, type, true);
+         
+         // Buat label durasi jika diaktifkan
+         if(showDuration)
+            CreateDurationLabel(oldestTicket, openPrice, openTime);
+         
+         // Buat label untuk profit (ke arah yang menguntungkan)
+         for(int j = 1; j <= maxLabels; j++)
+         {
+            double profitAmount = stepMoney * j;
+            double priceAtProfit = CalculatePriceForProfit(openPrice, volume, profitAmount, type, symbol);
+            
+            if(priceAtProfit > 0)
+               CreateLabel(oldestTicket, priceAtProfit, profitAmount, type, false);
+         }
+         
+         // Buat label untuk loss (ke arah yang merugikan)
+         for(int j = 1; j <= maxLabels; j++)
+         {
+            double lossAmount = -stepMoney * j;
+            double priceAtLoss = CalculatePriceForProfit(openPrice, volume, lossAmount, type, symbol);
+            
+            if(priceAtLoss > 0)
+               CreateLabel(oldestTicket, priceAtLoss, lossAmount, type, false);
+         }
+      }
+   }
+   
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+//| Update hanya durasi labels                                       |
+//+------------------------------------------------------------------+
+void UpdateDurationLabels()
+{
+   if(!showDuration) return;
+   
+   int totalPositions = PositionsTotal();
+   
    for(int i = 0; i < totalPositions; i++)
    {
       ulong ticket = PositionGetTicket(i);
@@ -114,30 +243,24 @@ void UpdatePriceLabels()
             if(symbol == _Symbol)
             {
                double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-               double volume = PositionGetDouble(POSITION_VOLUME);
-               ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+               datetime openTime = (datetime)PositionGetInteger(POSITION_TIME);
                
-               // Buat label di harga entry (0)
-               CreateLabel(ticket, openPrice, 0, type, true);
+               string objName = durationPrefix + IntegerToString(ticket);
                
-               // Buat label untuk profit (ke arah yang menguntungkan)
-               for(int j = 1; j <= maxLabels; j++)
+               if(ObjectFind(0, objName) >= 0)
                {
-                  double profitAmount = stepMoney * j;
-                  double priceAtProfit = CalculatePriceForProfit(openPrice, volume, profitAmount, type, symbol);
+                  // Update teks durasi
+                  string durationText = FormatDuration(openTime);
+                  ObjectSetString(0, objName, OBJPROP_TEXT, durationText);
                   
-                  if(priceAtProfit > 0)
-                     CreateLabel(ticket, priceAtProfit, profitAmount, type, false);
-               }
-               
-               // Buat label untuk loss (ke arah yang merugikan)
-               for(int j = 1; j <= maxLabels; j++)
-               {
-                  double lossAmount = -stepMoney * j;
-                  double priceAtLoss = CalculatePriceForProfit(openPrice, volume, lossAmount, type, symbol);
+                  // Update posisi Y (karena mungkin chart berubah)
+                  int subwin = 0;
+                  int x, y;
+                  ChartTimePriceToXY(0, subwin, TimeCurrent(), openPrice, x, y);
+                  int chartWidth = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
                   
-                  if(priceAtLoss > 0)
-                     CreateLabel(ticket, priceAtLoss, lossAmount, type, false);
+                  ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, chartWidth - xDistance);
+                  ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y + durationYOffset);
                }
             }
          }
@@ -173,6 +296,43 @@ double CalculatePriceForProfit(double openPrice, double volume, double targetPro
    }
    
    return targetPrice;
+}
+
+//+------------------------------------------------------------------+
+//| Buat label durasi                                                 |
+//+------------------------------------------------------------------+
+void CreateDurationLabel(ulong ticket, double price, datetime openTime)
+{
+   string objName = durationPrefix + IntegerToString(ticket);
+   
+   // Konversi harga ke koordinat Y pixel
+   int subwin = 0;
+   int x, y;
+   ChartTimePriceToXY(0, subwin, TimeCurrent(), price, x, y);
+   
+   // Dapatkan lebar chart
+   int chartWidth = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
+   
+   // Dapatkan nama font
+   string currentFont = GetFontName(fontType);
+   
+   // Format durasi
+   string durationText = FormatDuration(openTime);
+   
+   if(ObjectCreate(0, objName, OBJ_LABEL, 0, 0, 0))
+   {
+      ObjectSetString(0, objName, OBJPROP_TEXT, durationText);
+      ObjectSetInteger(0, objName, OBJPROP_COLOR, clrDuration);
+      ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, fontSize - 1); // Sedikit lebih kecil
+      ObjectSetString(0, objName, OBJPROP_FONT, currentFont);
+      ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, objName, OBJPROP_ANCHOR, ANCHOR_RIGHT);
+      ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, chartWidth - xDistance);
+      ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y + durationYOffset);
+      ObjectSetInteger(0, objName, OBJPROP_BACK, false);
+      ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -295,7 +455,7 @@ void DeleteAllObjects()
    for(int i = total - 1; i >= 0; i--)
    {
       string name = ObjectName(0, i);
-      if(StringFind(name, objPrefix) == 0)
+      if(StringFind(name, objPrefix) == 0 || StringFind(name, durationPrefix) == 0)
       {
          ObjectDelete(0, name);
       }

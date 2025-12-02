@@ -2,6 +2,8 @@
 
 Indikator MT5 yang menampilkan potensi profit dan loss secara real-time di samping harga pada chart.
 
+<img width="1717" height="767" alt="XAGUSD mM1" src="https://github.com/user-attachments/assets/9bc45e45-e877-4cbf-980b-67080c5cb79d" />
+
 ## Fitur
 
 - **Visualisasi P&L Real-time**: Menampilkan label profit/loss di berbagai level harga

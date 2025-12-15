@@ -552,6 +552,9 @@ void CreateHypotheticalVisualization(string identifier, double entryPrice, doubl
 {
    string basePrefix = "Hypo_" + identifier + "_";
    
+   // Gunakan waktu candle saat ini sebagai start time untuk zona lines
+   datetime entryTime = TimeCurrent();
+   
    // Create breakeven label at entry
    CreateHypotheticalPriceLabel(basePrefix + "Entry", entryPrice, 0, true, false);
    
@@ -571,13 +574,13 @@ void CreateHypotheticalVisualization(string identifier, double entryPrice, doubl
          
          if(priceP > 0)
          {
-            CreateHypotheticalZoneLine(basePrefix, priceP, j, true);
+            CreateHypotheticalZoneLine(basePrefix, priceP, j, true, entryTime);
             CreateHypotheticalPriceLabel(basePrefix + "P" + (string)j, priceP, profit, false, false);
          }
          
          if(priceL > 0)
          {
-            CreateHypotheticalZoneLine(basePrefix, priceL, j, false);
+            CreateHypotheticalZoneLine(basePrefix, priceL, j, false, entryTime);
             CreateHypotheticalPriceLabel(basePrefix + "L" + (string)j, priceL, loss, false, false);
          }
       }
@@ -589,10 +592,10 @@ void CreateHypotheticalVisualization(string identifier, double entryPrice, doubl
 //+------------------------------------------------------------------+
 // Create hypothetical zone line
 //+------------------------------------------------------------------+
-void CreateHypotheticalZoneLine(string prefix, double price, int index, bool isProfit)
+void CreateHypotheticalZoneLine(string prefix, double price, int index, bool isProfit, datetime entryTime)
 {
    string name = prefix + "Zone_" + (string)index + "_" + (isProfit?"P":"L");
-   datetime timeStart = TimeCurrent() - PeriodSeconds() * 100;
+   datetime timeStart = entryTime;
    
    int chartWidth = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
    int xStop = chartWidth - zoneLineStopPixels;
@@ -615,6 +618,12 @@ void CreateHypotheticalZoneLine(string prefix, double price, int index, bool isP
       ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
       ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
       ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
+   }
+   else
+   {
+      ChartXYToTimePrice(0, xStop, 0, subwin, timeEnd, dummyPrice);
+      ObjectMove(0, name, 0, timeStart, price);
+      ObjectMove(0, name, 1, timeEnd, price);
    }
 }
 

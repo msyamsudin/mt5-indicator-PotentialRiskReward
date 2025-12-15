@@ -1,8 +1,8 @@
 //+------------------------------------------------------------------+
-//|                PotentialPnLIndicator.mq5 - Versi 1.9             |
+//|                PotentialPnLIndicator.mq5 - Versi 1.10            |
 //+------------------------------------------------------------------+
 #property copyright "Syam"
-#property version   "1.9"
+#property version   "1.10"
 #property indicator_chart_window
 #property indicator_plots 0
 
@@ -32,6 +32,7 @@ input int      maxLabels          = 20;
 input bool     showPlusSign       = true;
 input bool     showDollarSign     = true;
 input int      xDistance          = 3;
+input int      hypoExitLabelOffset = 20;  // Offset label exit dari garis (dalam pixel)
 
 input bool     showDuration       = true;
 input color    clrDuration        = clrWhite;
@@ -50,11 +51,13 @@ input int      hypoLineWidth       = 2;
 input double   customLotSize       = 0.01;
 input string   entryLinePrefix     = "HypoEntry_";  // Format nama garis entry
 input string   exitLinePrefix      = "HypoExit_";   // Format nama garis exit
+input bool     enableDeleteButton  = true;          // Tampilkan tombol delete
 
 //--- Prefix objek
 string objPrefix      = "PnL_";
 string durationPrefix = "Duration_";
 string zoneLinePrefix = "ZoneLine_";
+string deleteButtonPrefix = "HypoDeleteBtn_";
 
 //+------------------------------------------------------------------+
 string GetFontName(ENUM_FONT_TYPE type)
@@ -99,12 +102,13 @@ void OnDeinit(const int reason)
 {
    EventKillTimer();
    DeleteAllObjects();
+   DeleteAllHypotheticalObjects();
+   DeleteAllDeleteButtons();
 }
 
 void OnTimer() 
 { 
    UpdateDurationLabels();
-   // Hypothetical lines akan diupdate hanya saat drag event, bukan di timer
 }
 
 int OnCalculate(const int rates_total,const int prev_calculated,
@@ -403,6 +407,31 @@ void OnChartEvent(const int id,const long& lparam,const double& dparam,const str
             DeleteHypotheticalVisualization(identifier);
       }
    }
+   
+   // Handle delete button click
+   if(id==CHARTEVENT_OBJECT_CLICK)
+   {
+      if(StringFind(sparam, deleteButtonPrefix)==0)
+      {
+         // Extract identifier dari button name
+         string identifier = StringSubstr(sparam, StringLen(deleteButtonPrefix));
+         
+         // Hapus entry dan exit line
+         string entryLineName = entryLinePrefix + identifier;
+         string exitLineName = exitLinePrefix + identifier;
+         
+         ObjectDelete(0, entryLineName);
+         ObjectDelete(0, exitLineName);
+         
+         // Hapus semua visualisasi terkait
+         DeleteHypotheticalVisualization(identifier);
+         
+         // Hapus tombol delete
+         ObjectDelete(0, sparam);
+         
+         ChartRedraw();
+      }
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -414,8 +443,12 @@ void ScanAndUpdateHypotheticalLines()
    if(PositionsTotal() > 0) 
    {
       DeleteAllHypotheticalObjects();
+      DeleteAllDeleteButtons();
       return;
    }
+   
+   // Hapus semua tombol delete yang ada terlebih dahulu
+   DeleteAllDeleteButtons();
    
    // Find all entry lines and their corresponding exit lines
    for(int i=ObjectsTotal(0)-1; i>=0; i--)
@@ -444,6 +477,10 @@ void ScanAndUpdateHypotheticalLines()
                
                // Calculate and visualize P&L
                CalculateAndVisualizeHypothetical(objName, exitLineName, identifier);
+               
+               // Buat tombol delete jika enabled
+               if(enableDeleteButton)
+                  CreateDeleteButton(identifier, objName);
             }
          }
       }
@@ -516,10 +553,10 @@ void CreateHypotheticalVisualization(string identifier, double entryPrice, doubl
    string basePrefix = "Hypo_" + identifier + "_";
    
    // Create breakeven label at entry
-   CreateHypotheticalPriceLabel(basePrefix + "Entry", entryPrice, 0, true);
+   CreateHypotheticalPriceLabel(basePrefix + "Entry", entryPrice, 0, true, false);
    
    // Create exit label showing P&L
-   CreateHypotheticalPriceLabel(basePrefix + "Exit", exitPrice, pnl, false);
+   CreateHypotheticalPriceLabel(basePrefix + "Exit", exitPrice, pnl, false, true);
    
    // Create zone lines and labels if enabled
    if(showZoneLines)
@@ -535,13 +572,13 @@ void CreateHypotheticalVisualization(string identifier, double entryPrice, doubl
          if(priceP > 0)
          {
             CreateHypotheticalZoneLine(basePrefix, priceP, j, true);
-            CreateHypotheticalPriceLabel(basePrefix + "P" + (string)j, priceP, profit, false);
+            CreateHypotheticalPriceLabel(basePrefix + "P" + (string)j, priceP, profit, false, false);
          }
          
          if(priceL > 0)
          {
             CreateHypotheticalZoneLine(basePrefix, priceL, j, false);
-            CreateHypotheticalPriceLabel(basePrefix + "L" + (string)j, priceL, loss, false);
+            CreateHypotheticalPriceLabel(basePrefix + "L" + (string)j, priceL, loss, false, false);
          }
       }
    }
@@ -584,7 +621,7 @@ void CreateHypotheticalZoneLine(string prefix, double price, int index, bool isP
 //+------------------------------------------------------------------+
 // Create hypothetical price label
 //+------------------------------------------------------------------+
-void CreateHypotheticalPriceLabel(string name, double price, double profitAmount, bool isBreakeven)
+void CreateHypotheticalPriceLabel(string name, double price, double profitAmount, bool isBreakeven, bool isExitLabel)
 {
    int subwin=0, x, y;
    ChartTimePriceToXY(0, subwin, TimeCurrent(), price, x, y);
@@ -617,9 +654,21 @@ void CreateHypotheticalPriceLabel(string name, double price, double profitAmount
       ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fontSize);
       ObjectSetString(0, name, OBJPROP_FONT, GetFontName(fontType));
       ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-      ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_RIGHT);
-      ObjectSetInteger(0, name, OBJPROP_XDISTANCE, w - xDistance);
-      ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+      
+      // Jika label exit, posisikan di tengah dengan offset
+      if(isExitLabel)
+      {
+         ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_LEFT);
+         ObjectSetInteger(0, name, OBJPROP_XDISTANCE, w / 2);
+         ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y - hypoExitLabelOffset);
+      }
+      else
+      {
+         ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_RIGHT);
+         ObjectSetInteger(0, name, OBJPROP_XDISTANCE, w - xDistance);
+         ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+      }
+      
       ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
       ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
    }
@@ -627,8 +676,58 @@ void CreateHypotheticalPriceLabel(string name, double price, double profitAmount
    {
       ObjectSetString(0, name, OBJPROP_TEXT, text);
       ObjectSetInteger(0, name, OBJPROP_COLOR, col);
-      ObjectSetInteger(0, name, OBJPROP_XDISTANCE, w - xDistance);
-      ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+      
+      if(isExitLabel)
+      {
+         ObjectSetInteger(0, name, OBJPROP_XDISTANCE, w / 2);
+         ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y - hypoExitLabelOffset);
+      }
+      else
+      {
+         ObjectSetInteger(0, name, OBJPROP_XDISTANCE, w - xDistance);
+         ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+// Create delete button for hypothetical scenario
+//+------------------------------------------------------------------+
+void CreateDeleteButton(string identifier, string entryLineName)
+{
+   string buttonName = deleteButtonPrefix + identifier;
+   
+   // Dapatkan posisi entry line
+   double entryPrice = ObjectGetDouble(0, entryLineName, OBJPROP_PRICE);
+   
+   int subwin=0, x, y;
+   ChartTimePriceToXY(0, subwin, TimeCurrent(), entryPrice, x, y);
+   
+   // Posisikan tombol di sebelah kiri entry line
+   int xPos = 5;
+   int yPos = y - 10;
+   
+   if(ObjectCreate(0, buttonName, OBJ_BUTTON, 0, 0, 0))
+   {
+      ObjectSetInteger(0, buttonName, OBJPROP_XDISTANCE, xPos);
+      ObjectSetInteger(0, buttonName, OBJPROP_YDISTANCE, yPos);
+      ObjectSetInteger(0, buttonName, OBJPROP_XSIZE, 20);
+      ObjectSetInteger(0, buttonName, OBJPROP_YSIZE, 20);
+      ObjectSetInteger(0, buttonName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetString(0, buttonName, OBJPROP_TEXT, "×");
+      ObjectSetInteger(0, buttonName, OBJPROP_FONTSIZE, 12);
+      ObjectSetInteger(0, buttonName, OBJPROP_COLOR, clrWhite);
+      ObjectSetInteger(0, buttonName, OBJPROP_BGCOLOR, clrRed);
+      ObjectSetInteger(0, buttonName, OBJPROP_BORDER_COLOR, clrDarkRed);
+      ObjectSetInteger(0, buttonName, OBJPROP_SELECTABLE, true);
+      ObjectSetInteger(0, buttonName, OBJPROP_HIDDEN, false);
+      ObjectSetString(0, buttonName, OBJPROP_TOOLTIP, "Delete hypothetical scenario: " + identifier);
+   }
+   else
+   {
+      // Update posisi jika sudah ada
+      ObjectSetInteger(0, buttonName, OBJPROP_XDISTANCE, xPos);
+      ObjectSetInteger(0, buttonName, OBJPROP_YDISTANCE, yPos);
    }
 }
 
@@ -646,6 +745,19 @@ void DeleteAllHypotheticalObjects()
 }
 
 //+------------------------------------------------------------------+
+// Delete all delete buttons
+//+------------------------------------------------------------------+
+void DeleteAllDeleteButtons()
+{
+   for(int i=ObjectsTotal(0)-1; i>=0; i--)
+   {
+      string n = ObjectName(0, i);
+      if(StringFind(n, deleteButtonPrefix)==0)
+         ObjectDelete(0, n);
+   }
+}
+
+//+------------------------------------------------------------------+
 // Delete hypothetical visualization for specific identifier
 //+------------------------------------------------------------------+
 void DeleteHypotheticalVisualization(string identifier)
@@ -658,6 +770,10 @@ void DeleteHypotheticalVisualization(string identifier)
       if(StringFind(n, basePrefix)==0)
          ObjectDelete(0, n);
    }
+   
+   // Hapus juga tombol delete terkait
+   string buttonName = deleteButtonPrefix + identifier;
+   ObjectDelete(0, buttonName);
 }
 
 //+------------------------------------------------------------------+
@@ -665,6 +781,8 @@ void DeleteHypotheticalVisualization(string identifier)
 //+------------------------------------------------------------------+
 void UpdateHypotheticalLabelsPosition()
 {
+   int w = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
+   
    // Cari semua hypothetical label dan update posisinya
    for(int i=ObjectsTotal(0)-1; i>=0; i--)
    {
@@ -674,6 +792,7 @@ void UpdateHypotheticalLabelsPosition()
       {
          // Ambil price dari nama objek atau property
          double price = 0;
+         bool isExitLabel = false;
          
          // Cari garis horizontal yang sesuai untuk mendapatkan price
          // Extract identifier dari label name
@@ -694,7 +813,10 @@ void UpdateHypotheticalLabelsPosition()
             {
                string exitLineName = exitLinePrefix + identifier;
                if(ObjectFind(0, exitLineName) >= 0)
+               {
                   price = ObjectGetDouble(0, exitLineName, OBJPROP_PRICE);
+                  isExitLabel = true;
+               }
             }
             else
             {
@@ -708,10 +830,41 @@ void UpdateHypotheticalLabelsPosition()
          {
             int subwin=0, x, y;
             ChartTimePriceToXY(0, subwin, TimeCurrent(), price, x, y);
-            int w = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
             
-            ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, w - xDistance);
-            ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
+            if(isExitLabel)
+            {
+               // Label exit di tengah dengan offset
+               ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, w / 2);
+               ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y - hypoExitLabelOffset);
+            }
+            else
+            {
+               // Label lainnya di kanan
+               ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, w - xDistance);
+               ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
+            }
+         }
+      }
+   }
+   
+   // Update posisi tombol delete
+   for(int i=ObjectsTotal(0)-1; i>=0; i--)
+   {
+      string objName = ObjectName(0, i);
+      
+      if(StringFind(objName, deleteButtonPrefix)==0)
+      {
+         string identifier = StringSubstr(objName, StringLen(deleteButtonPrefix));
+         string entryLineName = entryLinePrefix + identifier;
+         
+         if(ObjectFind(0, entryLineName) >= 0)
+         {
+            double entryPrice = ObjectGetDouble(0, entryLineName, OBJPROP_PRICE);
+            int subwin=0, x, y;
+            ChartTimePriceToXY(0, subwin, TimeCurrent(), entryPrice, x, y);
+            
+            ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, 5);
+            ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y - 10);
          }
       }
    }

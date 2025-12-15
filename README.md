@@ -14,6 +14,11 @@ Indikator MT5 yang menampilkan potensi profit dan loss secara real-time di sampi
 - **Auto-update**: Label durasi update setiap detik secara real-time
 - **Hypothetical Line**: Tambahkan garis entry dan exit untuk menghitung potensi profit/loss. Jadi kamu bisa bersyukur kalau trade terakhir memang mencapai level Stop Loss, atau menyesal karena harga malah menyentuh Take Profit setelah sempat menyentuh level Breakeven. :)
 
+### Cara menggunakan Hypothetical Line:
+1. Buat dua Horizontal Line
+2. Rename Horizontal Line menjadi "HypoEntry_1" atau "HypoExit_1"
+
+
 ## Instalasi
 
 1. Copy file `PotentialRiskReward.mq5` ke folder `MQL5/Indicators/`

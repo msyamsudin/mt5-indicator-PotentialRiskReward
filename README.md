@@ -19,7 +19,7 @@ Indikator MT5 yang menampilkan potensi profit dan loss secara real-time di sampi
 <img width="1609" height="784" alt="XAUUSDM5_2" src="https://github.com/user-attachments/assets/68821832-e650-462d-88ae-da67e5f1c94e" />
 
 
-### Cara menggunakan Hypothetical Line:
+## Cara menggunakan Hypothetical Line:
 1. Buat dua Horizontal Line
 2. Rename Horizontal Line menjadi "HypoEntry_1" atau "HypoExit_1"
 

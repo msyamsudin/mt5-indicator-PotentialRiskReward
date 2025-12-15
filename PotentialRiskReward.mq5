@@ -1,8 +1,8 @@
 //+------------------------------------------------------------------+
-//|                PotentialPnLIndicator.mq5 - Versi 1.7             |
+//|                PotentialPnLIndicator.mq5 - Versi 1.9             |
 //+------------------------------------------------------------------+
 #property copyright "Syam"
-#property version   "1.7"
+#property version   "1.9"
 #property indicator_chart_window
 #property indicator_plots 0
 
@@ -42,6 +42,14 @@ input color    clrZoneLine        = C'25,25,25';
 input ENUM_LINE_STYLE zoneLineStyle = STYLE_DOT;
 input int      zoneLineWidth      = 1;
 input int      zoneLineStopPixels = 50;
+
+input bool     enableHypothetically = true;
+input color    clrHypoEntryLine    = clrDodgerBlue;
+input color    clrHypoExitLine     = clrOrange;
+input int      hypoLineWidth       = 2;
+input double   customLotSize       = 0.01;
+input string   entryLinePrefix     = "HypoEntry_";  // Format nama garis entry
+input string   exitLinePrefix      = "HypoExit_";   // Format nama garis exit
 
 //--- Prefix objek
 string objPrefix      = "PnL_";
@@ -93,7 +101,11 @@ void OnDeinit(const int reason)
    DeleteAllObjects();
 }
 
-void OnTimer() { UpdateDurationLabels(); }
+void OnTimer() 
+{ 
+   UpdateDurationLabels();
+   // Hypothetical lines akan diupdate hanya saat drag event, bukan di timer
+}
 
 int OnCalculate(const int rates_total,const int prev_calculated,
                 const datetime& time[],const double& open[],const double& high[],
@@ -101,13 +113,28 @@ int OnCalculate(const int rates_total,const int prev_calculated,
                 const long& volume[],const int& spread[])
 {
    UpdatePriceLabels();
+   
+   // Update hypothetical lines setiap kali calculate jika tidak ada posisi
+   if(enableHypothetically && PositionsTotal() == 0)
+   {
+      UpdateHypotheticalLabelsPosition();
+   }
+   
    return(rates_total);
 }
 
 //+------------------------------------------------------------------+
 void UpdatePriceLabels()
 {
-   DeleteAllObjects();
+   // Hapus hanya objek real position, JANGAN hapus hypothetical
+   for(int i=ObjectsTotal(0)-1; i>=0; i--)
+   {
+      string n = ObjectName(0,i);
+      if(StringFind(n,objPrefix)==0 || StringFind(n,durationPrefix)==0 || 
+         StringFind(n,zoneLinePrefix)==0)
+         ObjectDelete(0,n);
+   }
+   
    if(PositionsTotal()==0) { ChartRedraw(); return; }
 
    //--- Cari posisi paling lama (oldest) pada symbol ini
@@ -168,8 +195,6 @@ void UpdatePriceLabels()
    ChartRedraw();
 }
 
-//+------------------------------------------------------------------+
-// Garis zona – berhenti sebelum label
 //+------------------------------------------------------------------+
 void CreateZoneLine(ulong ticket, double price, int index, bool isProfit)
 {
@@ -321,13 +346,374 @@ void DeleteAllObjects()
    for(int i=ObjectsTotal(0)-1; i>=0; i--)
    {
       string n = ObjectName(0,i);
-      if(StringFind(n,objPrefix)==0 || StringFind(n,durationPrefix)==0 || StringFind(n,zoneLinePrefix)==0)
+      if(StringFind(n,objPrefix)==0 || StringFind(n,durationPrefix)==0 || 
+         StringFind(n,zoneLinePrefix)==0)
          ObjectDelete(0,n);
    }
 }
 
+//+------------------------------------------------------------------+
+// HYPOTHETICALLY FEATURE - Using Horizontal Lines
+//+------------------------------------------------------------------+
+
 void OnChartEvent(const int id,const long& lparam,const double& dparam,const string& sparam)
 {
-   if(id==CHARTEVENT_CHART_CHANGE) UpdatePriceLabels();
+   if(id==CHARTEVENT_CHART_CHANGE) 
+   {
+      UpdatePriceLabels();
+      // Update hypothetical hanya saat chart change jika diperlukan
+      if(enableHypothetically && PositionsTotal() == 0) 
+         ScanAndUpdateHypotheticalLines();
+   }
+   
+   if(!enableHypothetically) return;
+   
+   // Handle line movement - update hanya saat garis di-drag
+   if(id==CHARTEVENT_OBJECT_DRAG)
+   {
+      if(StringFind(sparam, entryLinePrefix)==0 || StringFind(sparam, exitLinePrefix)==0)
+      {
+         // Hapus visualisasi lama terlebih dahulu
+         string identifier = "";
+         if(StringFind(sparam, entryLinePrefix)==0)
+            identifier = StringSubstr(sparam, StringLen(entryLinePrefix));
+         else if(StringFind(sparam, exitLinePrefix)==0)
+            identifier = StringSubstr(sparam, StringLen(exitLinePrefix));
+         
+         if(identifier != "")
+            DeleteHypotheticalVisualization(identifier);
+         
+         // Update visualisasi baru
+         ScanAndUpdateHypotheticalLines();
+      }
+   }
+   
+   // Handle line deletion
+   if(id==CHARTEVENT_OBJECT_DELETE)
+   {
+      if(StringFind(sparam, entryLinePrefix)==0 || StringFind(sparam, exitLinePrefix)==0)
+      {
+         string identifier = "";
+         if(StringFind(sparam, entryLinePrefix)==0)
+            identifier = StringSubstr(sparam, StringLen(entryLinePrefix));
+         else if(StringFind(sparam, exitLinePrefix)==0)
+            identifier = StringSubstr(sparam, StringLen(exitLinePrefix));
+         
+         if(identifier != "")
+            DeleteHypotheticalVisualization(identifier);
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+// Scan and update hypothetical lines based on HypoEntry_ format
+//+------------------------------------------------------------------+
+void ScanAndUpdateHypotheticalLines()
+{
+   // Only work when no positions open
+   if(PositionsTotal() > 0) 
+   {
+      DeleteAllHypotheticalObjects();
+      return;
+   }
+   
+   // Find all entry lines and their corresponding exit lines
+   for(int i=ObjectsTotal(0)-1; i>=0; i--)
+   {
+      string objName = ObjectName(0, i);
+      
+      // Check if it's an entry line (HypoEntry_xxx format)
+      if(StringFind(objName, entryLinePrefix)==0)
+      {
+         if(ObjectGetInteger(0, objName, OBJPROP_TYPE) == OBJ_HLINE)
+         {
+            // Setup entry line appearance
+            SetupHypotheticalEntryLine(objName);
+            
+            // Extract identifier from entry line name
+            string identifier = StringSubstr(objName, StringLen(entryLinePrefix));
+            
+            // Look for corresponding exit line (HypoExit_xxx)
+            string exitLineName = exitLinePrefix + identifier;
+            
+            if(ObjectFind(0, exitLineName) >= 0 && 
+               ObjectGetInteger(0, exitLineName, OBJPROP_TYPE) == OBJ_HLINE)
+            {
+               // Setup exit line appearance
+               SetupHypotheticalExitLine(exitLineName);
+               
+               // Calculate and visualize P&L
+               CalculateAndVisualizeHypothetical(objName, exitLineName, identifier);
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+// Setup entry line properties
+//+------------------------------------------------------------------+
+void SetupHypotheticalEntryLine(string lineName)
+{
+   ObjectSetInteger(0, lineName, OBJPROP_COLOR, clrHypoEntryLine);
+   ObjectSetInteger(0, lineName, OBJPROP_WIDTH, hypoLineWidth);
+   ObjectSetInteger(0, lineName, OBJPROP_STYLE, STYLE_SOLID);
+   ObjectSetInteger(0, lineName, OBJPROP_SELECTABLE, true);
+   ObjectSetString(0, lineName, OBJPROP_TEXT, "Hypothetical Entry");
+}
+
+//+------------------------------------------------------------------+
+// Setup exit line properties
+//+------------------------------------------------------------------+
+void SetupHypotheticalExitLine(string lineName)
+{
+   ObjectSetInteger(0, lineName, OBJPROP_COLOR, clrHypoExitLine);
+   ObjectSetInteger(0, lineName, OBJPROP_WIDTH, hypoLineWidth);
+   ObjectSetInteger(0, lineName, OBJPROP_STYLE, STYLE_SOLID);
+   ObjectSetInteger(0, lineName, OBJPROP_SELECTABLE, true);
+   ObjectSetString(0, lineName, OBJPROP_TEXT, "Hypothetical Exit");
+}
+
+//+------------------------------------------------------------------+
+// Calculate and visualize hypothetical scenario
+//+------------------------------------------------------------------+
+void CalculateAndVisualizeHypothetical(string entryLineName, string exitLineName, string identifier)
+{
+   double entryPrice = ObjectGetDouble(0, entryLineName, OBJPROP_PRICE);
+   double exitPrice = ObjectGetDouble(0, exitLineName, OBJPROP_PRICE);
+   
+   if(entryPrice <= 0 || exitPrice <= 0) return;
+   
+   // Determine position type
+   ENUM_POSITION_TYPE posType;
+   if(exitPrice > entryPrice)
+      posType = POSITION_TYPE_BUY;
+   else
+      posType = POSITION_TYPE_SELL;
+   
+   // Calculate P&L
+   string sym = _Symbol;
+   double calcVolume = customLotSize;
+   
+   double tickValue = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
+   
+   if(tickValue==0 || tickSize==0) return;
+   
+   double priceDiff = (posType==POSITION_TYPE_BUY) ? (exitPrice - entryPrice) : (entryPrice - exitPrice);
+   double hypotheticalPnL = (priceDiff / tickSize) * tickValue * calcVolume;
+   
+   // Create visualization
+   CreateHypotheticalVisualization(identifier, entryPrice, exitPrice, hypotheticalPnL, calcVolume, posType);
+}
+
+//+------------------------------------------------------------------+
+// Create visualization for hypothetical scenario
+//+------------------------------------------------------------------+
+void CreateHypotheticalVisualization(string identifier, double entryPrice, double exitPrice, 
+                                     double pnl, double lotUsed, ENUM_POSITION_TYPE posType)
+{
+   string basePrefix = "Hypo_" + identifier + "_";
+   
+   // Create breakeven label at entry
+   CreateHypotheticalPriceLabel(basePrefix + "Entry", entryPrice, 0, true);
+   
+   // Create exit label showing P&L
+   CreateHypotheticalPriceLabel(basePrefix + "Exit", exitPrice, pnl, false);
+   
+   // Create zone lines and labels if enabled
+   if(showZoneLines)
+   {
+      for(int j=1; j<=maxLabels; j++)
+      {
+         double profit = stepMoney * j;
+         double loss   = -profit;
+         
+         double priceP = CalculatePriceForProfit(entryPrice, lotUsed, profit, posType, _Symbol);
+         double priceL = CalculatePriceForProfit(entryPrice, lotUsed, loss, posType, _Symbol);
+         
+         if(priceP > 0)
+         {
+            CreateHypotheticalZoneLine(basePrefix, priceP, j, true);
+            CreateHypotheticalPriceLabel(basePrefix + "P" + (string)j, priceP, profit, false);
+         }
+         
+         if(priceL > 0)
+         {
+            CreateHypotheticalZoneLine(basePrefix, priceL, j, false);
+            CreateHypotheticalPriceLabel(basePrefix + "L" + (string)j, priceL, loss, false);
+         }
+      }
+   }
+   
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+// Create hypothetical zone line
+//+------------------------------------------------------------------+
+void CreateHypotheticalZoneLine(string prefix, double price, int index, bool isProfit)
+{
+   string name = prefix + "Zone_" + (string)index + "_" + (isProfit?"P":"L");
+   datetime timeStart = TimeCurrent() - PeriodSeconds() * 100;
+   
+   int chartWidth = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
+   int xStop = chartWidth - zoneLineStopPixels;
+   
+   datetime timeEnd = timeStart;
+   double dummyPrice = price;
+   int subwin = 0;
+   
+   if(!ChartXYToTimePrice(0, xStop, 0, subwin, timeEnd, dummyPrice))
+      timeEnd = TimeCurrent() + 365*24*60*60;
+   
+   if(timeEnd <= timeStart) timeEnd = timeStart + PeriodSeconds()*200;
+   
+   if(ObjectCreate(0, name, OBJ_TREND, 0, timeStart, price, timeEnd, price))
+   {
+      ObjectSetInteger(0, name, OBJPROP_COLOR, clrZoneLine);
+      ObjectSetInteger(0, name, OBJPROP_STYLE, zoneLineStyle);
+      ObjectSetInteger(0, name, OBJPROP_WIDTH, zoneLineWidth);
+      ObjectSetInteger(0, name, OBJPROP_BACK, true);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+      ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
+   }
+}
+
+//+------------------------------------------------------------------+
+// Create hypothetical price label
+//+------------------------------------------------------------------+
+void CreateHypotheticalPriceLabel(string name, double price, double profitAmount, bool isBreakeven)
+{
+   int subwin=0, x, y;
+   ChartTimePriceToXY(0, subwin, TimeCurrent(), price, x, y);
+   int w = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
+   
+   string text = "";
+   color col = clrBreakeven;
+   
+   if(isBreakeven) 
+      text = "0";
+   else if(profitAmount > 0)
+   {
+      if(showPlusSign && showDollarSign) text = StringFormat("+$%.0f", profitAmount);
+      else if(showPlusSign) text = StringFormat("+%.0f", profitAmount);
+      else if(showDollarSign) text = StringFormat("$%.0f", profitAmount);
+      else text = StringFormat("%.0f", profitAmount);
+      col = clrProfit;
+   }
+   else
+   {
+      text = showDollarSign ? StringFormat("-$%.0f", MathAbs(profitAmount))
+                            : StringFormat("-%.0f", MathAbs(profitAmount));
+      col = clrLoss;
+   }
+   
+   if(ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0))
+   {
+      ObjectSetString(0, name, OBJPROP_TEXT, text);
+      ObjectSetInteger(0, name, OBJPROP_COLOR, col);
+      ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fontSize);
+      ObjectSetString(0, name, OBJPROP_FONT, GetFontName(fontType));
+      ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, name, OBJPROP_ANCHOR, ANCHOR_RIGHT);
+      ObjectSetInteger(0, name, OBJPROP_XDISTANCE, w - xDistance);
+      ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   }
+   else
+   {
+      ObjectSetString(0, name, OBJPROP_TEXT, text);
+      ObjectSetInteger(0, name, OBJPROP_COLOR, col);
+      ObjectSetInteger(0, name, OBJPROP_XDISTANCE, w - xDistance);
+      ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   }
+}
+
+//+------------------------------------------------------------------+
+// Delete all hypothetical objects
+//+------------------------------------------------------------------+
+void DeleteAllHypotheticalObjects()
+{
+   for(int i=ObjectsTotal(0)-1; i>=0; i--)
+   {
+      string n = ObjectName(0, i);
+      if(StringFind(n, "Hypo_")==0)
+         ObjectDelete(0, n);
+   }
+}
+
+//+------------------------------------------------------------------+
+// Delete hypothetical visualization for specific identifier
+//+------------------------------------------------------------------+
+void DeleteHypotheticalVisualization(string identifier)
+{
+   string basePrefix = "Hypo_" + identifier + "_";
+   
+   for(int i=ObjectsTotal(0)-1; i>=0; i--)
+   {
+      string n = ObjectName(0, i);
+      if(StringFind(n, basePrefix)==0)
+         ObjectDelete(0, n);
+   }
+}
+
+//+------------------------------------------------------------------+
+// Update hypothetical labels position when price moves
+//+------------------------------------------------------------------+
+void UpdateHypotheticalLabelsPosition()
+{
+   // Cari semua hypothetical label dan update posisinya
+   for(int i=ObjectsTotal(0)-1; i>=0; i--)
+   {
+      string objName = ObjectName(0, i);
+      
+      if(StringFind(objName, "Hypo_")==0 && ObjectGetInteger(0, objName, OBJPROP_TYPE) == OBJ_LABEL)
+      {
+         // Ambil price dari nama objek atau property
+         double price = 0;
+         
+         // Cari garis horizontal yang sesuai untuk mendapatkan price
+         // Extract identifier dari label name
+         string tempName = StringSubstr(objName, 5); // Skip "Hypo_"
+         int underscorePos = StringFind(tempName, "_");
+         if(underscorePos > 0)
+         {
+            string identifier = StringSubstr(tempName, 0, underscorePos);
+            
+            // Cek apakah ini label entry atau exit
+            if(StringFind(objName, "_Entry") > 0)
+            {
+               string entryLineName = entryLinePrefix + identifier;
+               if(ObjectFind(0, entryLineName) >= 0)
+                  price = ObjectGetDouble(0, entryLineName, OBJPROP_PRICE);
+            }
+            else if(StringFind(objName, "_Exit") > 0)
+            {
+               string exitLineName = exitLinePrefix + identifier;
+               if(ObjectFind(0, exitLineName) >= 0)
+                  price = ObjectGetDouble(0, exitLineName, OBJPROP_PRICE);
+            }
+            else
+            {
+               // Untuk label P/L lainnya, kita perlu recalculate
+               // Untuk sementara skip, akan di-handle oleh scan
+               continue;
+            }
+         }
+         
+         if(price > 0)
+         {
+            int subwin=0, x, y;
+            ChartTimePriceToXY(0, subwin, TimeCurrent(), price, x, y);
+            int w = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
+            
+            ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, w - xDistance);
+            ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
+         }
+      }
+   }
 }
 //+------------------------------------------------------------------+

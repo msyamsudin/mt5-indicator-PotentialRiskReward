@@ -2,7 +2,7 @@
 
 Indikator MT5 yang menampilkan potensi profit dan loss secara real-time di samping harga pada chart, dilengkapi dengan position duration display.
 
-<img width="1717" height="767" alt="XAGUSD mM1" src="https://github.com/user-attachments/assets/9bc45e45-e877-4cbf-980b-67080c5cb79d" />
+<img width="1609" height="784" alt="XAUUSDM5_2" src="https://github.com/user-attachments/assets/68821832-e650-462d-88ae-da67e5f1c94e" />
 
 ## Fitur
 

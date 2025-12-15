@@ -12,6 +12,7 @@ Indikator MT5 yang menampilkan potensi profit dan loss secara real-time di sampi
 - **Multiple Font**: Pilih dari 10+ jenis font (Arial, Consolas, Courier New, dll)
 - **Interval Fleksibel**: Sesuaikan step interval dalam dollar ($)
 - **Auto-update**: Label durasi update setiap detik secara real-time
+- **Hypothetical Line**: Tambahkan garis entry dan exit untuk menghitung potensi profit/loss. Jadi kamu bisa bersyukur kalau trade terakhir memang mencapai level Stop Loss, atau menyesal karena harga malah menyentuh Take Profit setelah sempat menyentuh level Breakeven. :)
 
 ## Instalasi
 
